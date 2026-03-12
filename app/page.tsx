@@ -88,6 +88,14 @@ function analyzeEntries(entries: JournalEntry[]) {
   };
 }
 
+function truncateText(text: string, maxLength: number) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}...`;
+}
+
 export default function Home() {
   const [entries, setEntries] = useState(starterEntries);
   const [title, setTitle] = useState("");
@@ -96,7 +104,7 @@ export default function Home() {
   const [showAllHistory, setShowAllHistory] = useState(false);
 
   const insights = useMemo(() => analyzeEntries(entries), [entries]);
-  const recentEntries = entries.slice(0, 3);
+  const recentEntries = entries.slice(0, 2);
 
   const handleSave = () => {
     if (!text.trim()) {
@@ -269,7 +277,7 @@ export default function Home() {
               {recentEntries.map((entry) => (
                 <article
                   key={entry.id}
-                  className="rounded-[24px] border border-stone-200 bg-stone-50 p-4"
+                  className="rounded-[24px] h-[118px] border border-stone-200 bg-stone-50 p-4"
                 >
                   <div className="flex items-center justify-between gap-4">
                     <h3 className="text-base font-semibold text-stone-900">
@@ -278,7 +286,7 @@ export default function Home() {
                     <span className="text-xs text-stone-500">{entry.createdAt}</span>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-stone-600">
-                    {entry.text}
+                    {truncateText(entry.text, 125)}
                   </p>
                 </article>
               ))}
