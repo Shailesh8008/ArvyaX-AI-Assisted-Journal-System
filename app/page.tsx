@@ -1,29 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import AuthDialog from "./components/AuthDialog";
 import Popup from "./components/Popup";
+import { useJournalContext, type JournalEntry } from "./context/JournalContext";
 
-type JournalEntry = {
-  id: number;
-  title: string;
-  text: string;
-  createdAt: string;
-};
-
-const starterEntries: JournalEntry[] = [
-  {
-    id: 1,
-    title: "Morning reset",
-    text: "I felt calm after my walk today. Work still feels heavy, but I handled it better than yesterday and I want to keep that pace.",
-    createdAt: "Today, 8:10 AM",
-  },
-  {
-    id: 2,
-    title: "Late-night thoughts",
-    text: "I am tired and a little overwhelmed. Still, I finished one important task and that small win made me feel more confident.",
-    createdAt: "Yesterday, 10:42 PM",
-  },
-];
+const DEFAULT_AMBIENCE = "forest";
 
 const positiveWords = [
   "calm",
@@ -97,25 +79,69 @@ function truncateText(text: string, maxLength: number) {
   return `${text.slice(0, maxLength)}...`;
 }
 
+function PreviousEntriesSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 2 }).map((_, index) => (
+        <div
+          key={index}
+          className="h-[118px] animate-pulse rounded-[24px] border border-stone-200 bg-stone-50 p-4"
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div className="h-4 w-24 rounded bg-stone-200" />
+            <div className="h-3 w-20 rounded bg-stone-200" />
+          </div>
+          <div className="mt-4 space-y-2">
+            <div className="h-3 w-full rounded bg-stone-200" />
+            <div className="h-3 w-[82%] rounded bg-stone-200" />
+            <div className="h-3 w-[65%] rounded bg-stone-200" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Home() {
-  const [entries, setEntries] = useState(starterEntries);
-  const [title, setTitle] = useState("");
+  const [ambience, setAmbience] = useState("");
   const [text, setText] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register" | null>(null);
   const [showInsights, setShowInsights] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const {
+    userId,
+    user,
+    journals,
+    isLoading,
+    requiresLogin,
+    prependJournal,
+    setAuthenticatedSession,
+  } = useJournalContext();
 
-  const insights = useMemo(() => analyzeEntries(entries), [entries]);
-  const recentEntries = entries.slice(0, 2);
+  const insights = useMemo(() => analyzeEntries(journals), [journals]);
+  const recentEntries = journals.slice(0, 2);
 
-  const handleSave = () => {
-    if (!text.trim()) {
+  const handleSave = async () => {
+    const trimmedText = text.trim();
+
+    if (!trimmedText || isSaving) {
       return;
     }
 
+    if (!userId) {
+      setErrorMessage("Please login to save journal entries.");
+      return;
+    }
+
+    setIsSaving(true);
+    setErrorMessage("");
+
     const nextEntry: JournalEntry = {
       id: Date.now(),
-      title: title.trim() || `Entry ${entries.length + 1}`,
-      text: text.trim(),
+      text: trimmedText,
+      ambience: ambience.trim() || DEFAULT_AMBIENCE,
       createdAt: new Date().toLocaleString([], {
         month: "short",
         day: "numeric",
@@ -124,9 +150,37 @@ export default function Home() {
       }),
     };
 
-    setEntries([nextEntry, ...entries]);
-    setTitle("");
-    setText("");
+    try {
+      const response = await fetch("/api/journal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          userId,
+          ambience: nextEntry.ambience,
+          text: trimmedText,
+        }),
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(responseText || "Unable to save journal entry.");
+      }
+
+      prependJournal(nextEntry);
+      setAmbience(DEFAULT_AMBIENCE);
+      setText("");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to save journal entry.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -157,9 +211,9 @@ export default function Home() {
 
           <div className="space-y-4">
             <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Entry title"
+              value={ambience}
+              onChange={(event) => setAmbience(event.target.value)}
+              placeholder="Ambience (for example: forest, rain, ocean)"
               className="w-full rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm outline-none transition focus:border-amber-500 focus:bg-white"
             />
             <textarea
@@ -169,16 +223,22 @@ export default function Home() {
               className="min-h-[220px] w-full rounded-[28px] border border-stone-200 bg-stone-50 px-4 py-4 text-sm leading-6 outline-none transition focus:border-amber-500 focus:bg-white"
             />
             <div className="flex items-center justify-between gap-4">
-              <p className="text-sm text-stone-500">
-                {entries.length} saved{" "}
-                {entries.length === 1 ? "entry" : "entries"}
-              </p>
+              <div>
+                <p className="text-sm text-stone-500">
+                  {journals.length} saved{" "}
+                  {journals.length === 1 ? "entry" : "entries"}
+                </p>
+                {errorMessage ? (
+                  <p className="mt-1 text-sm text-red-600">{errorMessage}</p>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={handleSave}
-                className="rounded-full bg-amber-500 px-5 py-3 text-sm font-medium text-stone-950 transition hover:bg-amber-400"
+                disabled={isSaving}
+                className="rounded-full bg-amber-500 px-5 py-3 text-sm font-medium text-stone-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Save Entry
+                {isSaving ? "Saving..." : "Save Entry"}
               </button>
             </div>
           </div>
@@ -272,37 +332,80 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setShowAllHistory(true)}
-                className="rounded-full border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-900 hover:text-stone-900"
+                disabled={isLoading || requiresLogin || journals.length === 0}
+                className="rounded-full border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-900 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 View All
               </button>
             </div>
-            <div className="space-y-4">
-              {recentEntries.map((entry) => (
-                <article
-                  key={entry.id}
-                  className="rounded-[24px] h-[118px] border border-stone-200 bg-stone-50 p-4"
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <h3 className="text-base font-semibold text-stone-900">
-                      {entry.title}
-                    </h3>
-                    <span className="text-xs text-stone-500">
-                      {entry.createdAt}
-                    </span>
-                  </div>
-                  <p className="mt-3 text-sm leading-6 text-stone-600">
-                    {truncateText(entry.text, 125)}
-                  </p>
-                </article>
-              ))}
-            </div>
+            {isLoading ? <PreviousEntriesSkeleton /> : null}
+            {!isLoading && requiresLogin ? (
+              <div className="rounded-[24px] border border-dashed border-stone-300 bg-stone-50 p-5">
+                <p className="text-sm text-stone-600">
+                  Please login to see your journal history.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode("login")}
+                    className="rounded-full bg-stone-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-700"
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode("register")}
+                    className="rounded-full border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-900 hover:text-stone-900"
+                  >
+                    Register
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {!isLoading && !requiresLogin && recentEntries.length === 0 ? (
+              <div className="rounded-[24px] border border-dashed border-stone-300 bg-stone-50 p-5 text-sm text-stone-600">
+                No journal history yet.
+              </div>
+            ) : null}
+            {!isLoading && !requiresLogin && recentEntries.length > 0 ? (
+              <div className="space-y-4">
+                {recentEntries.map((entry) => (
+                  <article
+                    key={entry.id}
+                    className="h-[118px] rounded-[24px] border border-stone-200 bg-stone-50 p-4"
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <h3 className="text-base font-semibold capitalize text-stone-900">
+                        {entry.ambience}
+                      </h3>
+                      <span className="text-xs text-stone-500">
+                        {entry.createdAt}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-stone-600">
+                      {truncateText(entry.text, 125)}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </section>
         </aside>
       </div>
 
       {showAllHistory ? (
-        <Popup entries={entries} setShowAllHistory={setShowAllHistory} />
+        <Popup entries={journals} setShowAllHistory={setShowAllHistory} />
+      ) : null}
+      {authMode ? (
+        <AuthDialog
+          mode={authMode}
+          onClose={() => setAuthMode(null)}
+          onSwitchMode={setAuthMode}
+          onAuthenticated={(session) => {
+            setAuthenticatedSession(session);
+            setErrorMessage("");
+          }}
+        />
       ) : null}
     </main>
   );

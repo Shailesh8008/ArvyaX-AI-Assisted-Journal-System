@@ -1,19 +1,15 @@
-import { ChangeEvent } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import type { JournalEntry } from "../context/JournalContext";
 
-type JournalEntry = {
-  id: number;
-  title: string;
-  text: string;
-  createdAt: string;
+type PopupProps = {
+  setShowAllHistory: Dispatch<SetStateAction<boolean>>;
+  entries: JournalEntry[];
 };
 
 export default function Popup({
   setShowAllHistory,
   entries,
-}: {
-  setShowAllHistory: Function;
-  entries: JournalEntry[];
-}) {
+}: PopupProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/45 p-4">
       <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-[0_30px_120px_rgba(28,25,23,0.28)]">
@@ -41,8 +37,8 @@ export default function Popup({
               className="rounded-[24px] border border-stone-200 bg-stone-50 p-4"
             >
               <div className="flex items-center justify-between gap-4">
-                <h3 className="text-base font-semibold text-stone-900">
-                  {entry.title}
+                <h3 className="text-base font-semibold capitalize text-stone-900">
+                  {entry.ambience}
                 </h3>
                 <span className="text-xs text-stone-500">
                   {entry.createdAt}
