@@ -1,75 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import AuthDialog from "./components/AuthDialog";
 import Popup from "./components/Popup";
 import { useJournalContext, type JournalEntry } from "./context/JournalContext";
 
 const DEFAULT_AMBIENCE = "forest";
 
-const positiveWords = [
-  "calm",
-  "better",
-  "good",
-  "great",
-  "happy",
-  "confident",
-  "win",
-  "hopeful",
-  "grateful",
-  "focused",
-];
+type JournalInsights = {
+  totalEntries: number;
+  topEmotion: string;
+  mostUsedAmbience: string;
+  recentKeywords: string[];
+};
 
-const heavyWords = [
-  "tired",
-  "overwhelmed",
-  "stress",
-  "stressed",
-  "heavy",
-  "anxious",
-  "sad",
-  "worried",
-  "angry",
-];
-
-function analyzeEntries(entries: JournalEntry[]) {
-  const joined = entries.map((entry) => entry.text.toLowerCase()).join(" ");
-  const words = joined.split(/\s+/).filter(Boolean);
-  const positiveCount = words.filter((word) =>
-    positiveWords.includes(word.replace(/[^a-z]/g, "")),
-  ).length;
-  const heavyCount = words.filter((word) =>
-    heavyWords.includes(word.replace(/[^a-z]/g, "")),
-  ).length;
-
-  const mood =
-    positiveCount > heavyCount
-      ? "Mostly steady with some positive momentum"
-      : positiveCount < heavyCount
-        ? "A bit emotionally loaded right now"
-        : "Balanced, with mixed emotions showing up";
-
-  const commonTheme =
-    joined.includes("work") || joined.includes("task")
-      ? "Work and productivity"
-      : joined.includes("family") || joined.includes("friend")
-        ? "Relationships and connection"
-        : "Personal reflection and emotional regulation";
-
-  const suggestion =
-    heavyCount >= positiveCount
-      ? "Keep entries short and consistent for a few days. Look for one recurring pressure point you can reduce."
-      : "You seem to recover well after difficult moments. Capture what helped so you can repeat it intentionally.";
-
-  return {
-    mood,
-    commonTheme,
-    suggestion,
-    totalEntries: entries.length,
-    positiveCount,
-    heavyCount,
-  };
-}
+type JournalAnalysis = {
+  emotion: string;
+  keywords: string[];
+  summary: string;
+};
 
 function truncateText(text: string, maxLength: number) {
   if (text.length <= maxLength) {
@@ -102,14 +51,39 @@ function PreviousEntriesSkeleton() {
   );
 }
 
+function InsightsSkeleton() {
+  return (
+    <section className="rounded-[32px] border border-stone-200/70 bg-stone-950 p-6 text-stone-50 shadow-[0_24px_80px_rgba(28,25,23,0.22)]">
+      <div className="h-4 w-24 animate-pulse rounded bg-white/10" />
+      <div className="mt-3 h-8 w-52 animate-pulse rounded bg-white/10" />
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="rounded-2xl bg-white/8 p-4">
+            <div className="h-3 w-24 animate-pulse rounded bg-white/10" />
+            <div className="mt-3 h-6 w-32 animate-pulse rounded bg-white/10" />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
   const [ambience, setAmbience] = useState("");
   const [text, setText] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register" | null>(null);
   const [showInsights, setShowInsights] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [insights, setInsights] = useState<JournalInsights | null>(null);
+  const [isInsightsLoading, setIsInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState("");
+  const [analysisResult, setAnalysisResult] = useState<JournalAnalysis | null>(
+    null,
+  );
   const {
     userId,
     user,
@@ -120,8 +94,67 @@ export default function Home() {
     setAuthenticatedSession,
   } = useJournalContext();
 
-  const insights = useMemo(() => analyzeEntries(journals), [journals]);
   const recentEntries = journals.slice(0, 2);
+
+  useEffect(() => {
+    if (!showInsights || !userId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadInsights() {
+      setIsInsightsLoading(true);
+      setInsightsError("");
+
+      try {
+        const response = await fetch(`/api/journal/insights/${userId}`, {
+          credentials: "include",
+        });
+        const data = (await response.json()) as Partial<JournalInsights> & {
+          detail?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.detail || "Unable to load insights.");
+        }
+
+        if (!cancelled) {
+          setInsights({
+            totalEntries: Number(data.totalEntries ?? 0),
+            topEmotion:
+              typeof data.topEmotion === "string" ? data.topEmotion : "Neutral",
+            mostUsedAmbience:
+              typeof data.mostUsedAmbience === "string"
+                ? data.mostUsedAmbience
+                : "None",
+            recentKeywords: Array.isArray(data.recentKeywords)
+              ? data.recentKeywords.filter(
+                  (keyword): keyword is string => typeof keyword === "string",
+                )
+              : [],
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setInsightsError(
+            error instanceof Error ? error.message : "Unable to load insights.",
+          );
+          setInsights(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsInsightsLoading(false);
+        }
+      }
+    }
+
+    void loadInsights();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showInsights, userId, journals.length]);
 
   const handleSave = async () => {
     const trimmedText = text.trim();
@@ -183,6 +216,73 @@ export default function Home() {
     }
   };
 
+  const handleAnalyze = async () => {
+    if (showAnalysis) {
+      setShowAnalysis(false);
+      return;
+    }
+
+    const trimmedText = text.trim();
+
+    if (!userId) {
+      setErrorMessage("Please login to analyze journal text.");
+      return;
+    }
+
+    if (!trimmedText || isAnalyzing) {
+      setErrorMessage("Write something before analyzing.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setErrorMessage("");
+    setInsightsError("");
+
+    try {
+      const response = await fetch("/api/journal/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          text: trimmedText,
+        }),
+      });
+      const data = (await response.json()) as Partial<JournalAnalysis> & {
+        detail?: string;
+      };
+      console.log(data)
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Unable to analyze journal text.");
+      }
+
+      setAnalysisResult({
+        emotion: typeof data.emotion === "string" ? data.emotion : "Neutral",
+        keywords: Array.isArray(data.keywords)
+          ? data.keywords.filter(
+              (keyword): keyword is string => typeof keyword === "string",
+            )
+          : [],
+        summary: typeof data.summary === "string" ? data.summary : "",
+      });
+      setShowAnalysis(true);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to analyze journal text.",
+      );
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleViewInsights = () => {
+    setShowInsights((current) => !current);
+  };
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.18),_transparent_30%),linear-gradient(180deg,_#fffdf7_0%,_#f3efe4_100%)] px-6 py-10 text-stone-900">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -200,13 +300,26 @@ export default function Home() {
                 a lightweight reflection summary.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowInsights((current) => !current)}
-              className="rounded-full bg-stone-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-stone-700"
-            >
-              {showInsights ? "Hide Insights" : "Analyze"}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleAnalyze}
+                className="rounded-full bg-stone-900 py-3 w-[8rem] text-sm font-medium text-white transition hover:bg-stone-700 cursor-pointer"
+              >
+                {isAnalyzing
+                  ? "Analyzing..."
+                  : showAnalysis
+                    ? "Hide Analysis"
+                    : "Analyze"}
+              </button>
+              <button
+                type="button"
+                onClick={handleViewInsights}
+                className="rounded-full border border-stone-300 w-[8rem] bg-white py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-900 hover:text-stone-900 cursor-pointer"
+              >
+                {showInsights ? "Hide Insights" : "View Insights"}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -236,7 +349,7 @@ export default function Home() {
                 type="button"
                 onClick={handleSave}
                 disabled={isSaving}
-                className="rounded-full bg-amber-500 px-5 py-3 text-sm font-medium text-stone-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full bg-amber-500 px-5 py-3 text-sm font-medium text-stone-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
               >
                 {isSaving ? "Saving..." : "Save Entry"}
               </button>
@@ -245,7 +358,45 @@ export default function Home() {
         </section>
 
         <aside className="space-y-6">
-          {showInsights ? (
+          {showAnalysis && analysisResult ? (
+            <section className="rounded-[32px] border border-stone-200/70 bg-stone-950 p-6 text-stone-50 shadow-[0_24px_80px_rgba(28,25,23,0.22)]">
+              <p className="text-sm uppercase tracking-[0.28em] text-amber-300">
+                Analysis
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">
+                Latest journal analysis
+              </h2>
+              <div className="mt-6 rounded-[24px] border border-white/10 bg-white/6 p-5">
+                <p className="text-xs uppercase tracking-[0.24em] text-amber-300">
+                  Emotion
+                </p>
+                <p className="mt-3 text-3xl font-semibold capitalize text-white">
+                  {analysisResult.emotion}
+                </p>
+                <p className="mt-4 text-xs uppercase tracking-[0.24em] text-amber-300">
+                  Summary
+                </p>
+                <p className="mt-2 text-sm leading-6 text-stone-300">
+                  {analysisResult.summary}
+                </p>
+                <p className="mt-4 text-xs uppercase tracking-[0.24em] text-amber-300">
+                  Keywords
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {analysisResult.keywords.map((keyword) => (
+                    <span
+                      key={keyword}
+                      className="rounded-full bg-amber-400/15 px-3 py-1 text-sm text-amber-100"
+                    >
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </section>
+          ) : null}
+          {showInsights && isInsightsLoading ? <InsightsSkeleton /> : null}
+          {showInsights && !isInsightsLoading ? (
             <section className="rounded-[32px] border border-stone-200/70 bg-stone-950 p-6 text-stone-50 shadow-[0_24px_80px_rgba(28,25,23,0.22)]">
               <p className="text-sm uppercase tracking-[0.28em] text-amber-300">
                 Insights
@@ -253,58 +404,58 @@ export default function Home() {
               <h2 className="mt-2 text-2xl font-semibold">
                 Reflection summary
               </h2>
-              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              {insightsError ? (
+                <p className="mt-4 text-sm text-red-300">{insightsError}</p>
+              ) : null}
+              <div className="mt-6 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl bg-white/8 p-4">
                   <p className="text-xs uppercase tracking-[0.24em] text-stone-300">
-                    Entries
+                    Total Entries
                   </p>
                   <p className="mt-2 text-3xl font-semibold">
-                    {insights.totalEntries}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-white/8 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-stone-300">
-                    Positive
-                  </p>
-                  <p className="mt-2 text-3xl font-semibold">
-                    {insights.positiveCount}
+                    {insights?.totalEntries ?? 0}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white/8 p-4">
                   <p className="text-xs uppercase tracking-[0.24em] text-stone-300">
-                    Heavy
+                    Top Emotion
                   </p>
                   <p className="mt-2 text-3xl font-semibold">
-                    {insights.heavyCount}
+                    {insights?.topEmotion ?? "Neutral"}
                   </p>
                 </div>
-              </div>
-              <div className="mt-6 space-y-4 text-sm leading-6 text-stone-300">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-amber-300">
-                    Mood pattern
+                <div className="rounded-2xl bg-white/8 p-4">
+                  <p className="text-xs uppercase tracking-[0.24em] text-stone-300">
+                    Most Used Ambience
                   </p>
-                  <p className="mt-1 text-base text-white">{insights.mood}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-amber-300">
-                    Main theme
-                  </p>
-                  <p className="mt-1 text-base text-white">
-                    {insights.commonTheme}
+                  <p className="mt-2 text-3xl font-semibold">
+                    {insights?.mostUsedAmbience ?? "None"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-amber-300">
-                    Suggested prompt
+                  <p className="text-xs uppercase tracking-[0.24em] text-stone-300">
+                    Recent Keywords
                   </p>
-                  <p className="mt-1 text-base text-white">
-                    {insights.suggestion}
-                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(insights?.recentKeywords ?? []).length > 0 ? (
+                      (insights?.recentKeywords ?? []).map((keyword) => (
+                        <span
+                          key={keyword}
+                          className="rounded-full bg-amber-400/15 px-3 py-1 text-sm text-amber-100"
+                        >
+                          {keyword}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-stone-300">
+                        No keywords yet.
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
-          ) : (
+          ) : !showAnalysis ? (
             <section className="rounded-[32px] border border-dashed border-stone-300 bg-white/65 p-6 text-stone-600">
               <p className="text-sm uppercase tracking-[0.28em] text-stone-500">
                 Insights
@@ -317,7 +468,7 @@ export default function Home() {
                 entries shown here.
               </p>
             </section>
-          )}
+          ) : null}
 
           <section className="rounded-[32px] border border-stone-200/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(120,83,32,0.1)]">
             <div className="mb-4 flex items-center justify-between gap-4">
@@ -333,7 +484,7 @@ export default function Home() {
                 type="button"
                 onClick={() => setShowAllHistory(true)}
                 disabled={isLoading || requiresLogin || journals.length === 0}
-                className="rounded-full border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-900 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-900 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
               >
                 View All
               </button>

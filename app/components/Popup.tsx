@@ -1,3 +1,5 @@
+"use client";
+
 import type { Dispatch, SetStateAction } from "react";
 import type { JournalEntry } from "../context/JournalContext";
 
@@ -25,7 +27,7 @@ export default function Popup({
           <button
             type="button"
             onClick={() => setShowAllHistory(false)}
-            className="rounded-full bg-stone-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-700"
+            className="rounded-full bg-stone-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-700 cursor-pointer"
           >
             Close
           </button>
